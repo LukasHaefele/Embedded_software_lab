@@ -68,8 +68,9 @@ unsigned int* calcSequences(int t1, int t2) {
         int bit2_t2 = (reg2 >> (t2 - 1)) & 1;
         int chipBit = (bit1 ^ bit2_t1 ^ bit2_t2) ? 1 : 0;
 
-        if (chipBit) {
-            chipSequence[i / 32] |= (1U << (i % 32)); // Set the bit
+        if (!chipBit) {
+            // Set the bit inverted as sign bit
+            chipSequence[i / 32] |= (1U << (i % 32));
         }
 
         int feedback1 = ((reg1 >> 9) & 1) ^ ((reg1 >> 2) & 1);
@@ -84,23 +85,30 @@ unsigned int* calcSequences(int t1, int t2) {
 }
 
 int cross_correlate(int* signal, unsigned int* sequence) {
-    int best_sum = 0;
-    int best_shift = 10000; // Initialize to a large value
-    for (int shift = 0; shift < SEQUENCE_LENGTH; shift++) {
+    for (int shift = 0; shift < SEQUENCE_LENGTH; ++shift) {
         int sum = 0;
-
-        for (int i = 0; i < SEQUENCE_LENGTH; i++) {
-            int index = (i + shift) % SEQUENCE_LENGTH;
-            int sequenceBit = (sequence[index / 32] >> (index % 32)) & 1;
-            int sequenceValue = sequenceBit ? 1 : -1;
-            sum += signal[i] * sequenceValue;
+        int first_part = SEQUENCE_LENGTH - shift;
+        // First part: no wrap
+        for (int i = 0; i < first_part; ++i) {
+            int sequence_index = i + shift;
+            int word = sequence[sequence_index >> 5];
+            int bit = (word >> (sequence_index & 31)) & 1;
+            int sequence_bit = 1 - 2 * bit;
+            sum += signal[i] * sequence_bit;
+        }
+        // Second part: wrap around
+        for (int i = first_part; i < SEQUENCE_LENGTH; ++i) {
+            int sequence_index = i - first_part;
+            int word = sequence[sequence_index >> 5];
+            int bit = (word >> (sequence_index & 31)) & 1;
+            int sequence_bit = 1 - 2 * bit;
+            sum += signal[i] * sequence_bit;
         }
         if (abs(sum) > MIN_CORRELATION) {
-            return shift * (sum / abs(sum)); // Return the shift with the sign of the sum
+            return (sum < 0) ? -shift : shift;
         }
     }
-
-    return 10000; // Return a large value if no significant correlation is found
+    return 10000;
 }
 
 // Benchmark for readNumbersFromFile
