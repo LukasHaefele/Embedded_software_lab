@@ -84,25 +84,45 @@ unsigned int* calcSequences(int t1, int t2) {
     return chipSequence;
 }
 
+// Add this helper to expand the packed sequence to +1/-1
+void unpack_sequence(const unsigned int* sequence, int* unpacked) {
+    for (int i = 0; i < SEQUENCE_LENGTH; ++i) {
+        int word = sequence[i >> 5];
+        int bit = (word >> (i & 31)) & 1;
+        unpacked[i] = 1 - 2 * bit;
+    }
+}
+
+// Optimized cross_correlate using precomputed sequence bits
 int cross_correlate(int* signal, unsigned int* sequence) {
+    static int unpacked_seq[SEQUENCE_LENGTH];
+    unpack_sequence(sequence, unpacked_seq);
+
+    int best_shift = 10000;
+    int best_sum = 0;
+
     for (int shift = 0; shift < SEQUENCE_LENGTH; ++shift) {
         int sum = 0;
-        int first_part = SEQUENCE_LENGTH - shift;
-        // First part: no wrap
-        for (int i = 0; i < first_part; ++i) {
-            int sequence_index = i + shift;
-            int word = sequence[sequence_index >> 5];
-            int bit = (word >> (sequence_index & 31)) & 1;
-            int sequence_bit = 1 - 2 * bit;
-            sum += signal[i] * sequence_bit;
+        int i = 0;
+        int idx = shift;
+        // Unroll by 4 for a small boost
+        for (; idx <= SEQUENCE_LENGTH - 4; idx += 4) {
+            int idx_mod = idx % SEQUENCE_LENGTH;
+            sum += signal[idx_mod]     * unpacked_seq[i];
+            sum += signal[idx_mod + 1] * unpacked_seq[i + 1];
+            sum += signal[idx_mod + 2] * unpacked_seq[i + 2];
+            sum += signal[idx_mod + 3] * unpacked_seq[i + 3];
+            i += 4;
         }
-        // Second part: wrap around
-        for (int i = first_part; i < SEQUENCE_LENGTH; ++i) {
-            int sequence_index = i - first_part;
-            int word = sequence[sequence_index >> 5];
-            int bit = (word >> (sequence_index & 31)) & 1;
-            int sequence_bit = 1 - 2 * bit;
-            sum += signal[i] * sequence_bit;
+        for (; i < SEQUENCE_LENGTH - 4; i += 4) {
+            sum += signal[(i + shift) % SEQUENCE_LENGTH]     * unpacked_seq[i];
+            sum += signal[(i + shift + 1) % SEQUENCE_LENGTH] * unpacked_seq[i + 1];
+            sum += signal[(i + shift + 2) % SEQUENCE_LENGTH] * unpacked_seq[i + 2];
+            sum += signal[(i + shift + 3) % SEQUENCE_LENGTH] * unpacked_seq[i + 3];
+        }
+
+        for (; i < SEQUENCE_LENGTH; ++i) {
+            sum += signal[i] * unpacked_seq[(i + shift) % SEQUENCE_LENGTH];
         }
         if (abs(sum) > MIN_CORRELATION) {
             return (sum < 0) ? -shift : shift;
